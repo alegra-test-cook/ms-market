@@ -2,9 +2,8 @@ const express = require('express');
 const amqp = require('amqplib');
 const axios = require('axios');
 
-const PORT = process.env.PORT || 3004;
-const RABBIT_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
-const MARKET_API_URL = 'https://recruitment.alegra.com/api/farmers-market/buy';
+// Importar configuraciones
+const { PORT, RABBIT_URL, MARKET_API_URL, QUEUE_NAMES, RETRY_TIMEOUT } = require('./config');
 
 const app = express();
 app.use(express.json());
@@ -12,9 +11,9 @@ app.use(express.json());
 async function start() {
   const connection = await amqp.connect(RABBIT_URL);
   const channel = await connection.createChannel();
-  await channel.assertQueue('market_requests');
+  await channel.assertQueue(QUEUE_NAMES.MARKET_REQUESTS);
 
-  channel.consume('market_requests', async (msg) => {
+  channel.consume(QUEUE_NAMES.MARKET_REQUESTS, async (msg) => {
     if (!msg) return;
     const request = JSON.parse(msg.content.toString());
     const { orderId, ingredient, quantity } = request;
@@ -35,12 +34,12 @@ async function start() {
           } else {
             console.log(`🟡 Mercado: "${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
             // Esperar antes de intentar de nuevo
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
           }
         } catch (error) {
           console.error(`🔴 Error en API del Mercado:`, error.message);
           // Esperar antes de intentar de nuevo
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
         }
       }
       
