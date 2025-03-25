@@ -1,14 +1,28 @@
 const express = require('express');
 const amqp = require('amqplib');
 const axios = require('axios');
+const cors = require('cors');
 
 // Importar configuraciones
 const { PORT, RABBIT_URL, MARKET_API_URL, QUEUE_NAMES, RETRY_TIMEOUT } = require('./config');
+const logger = require('./logger');
 
 const app = express();
+
+// Configurar CORS
+app.use(cors({
+  origin: '*',  // Permite todos los orígenes - ajustar en producción
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
 async function start() {
+  // Inicializar logger
+  await logger.initLogger();
+  await logger.info('Servicio de Mercado iniciado');
+  
   const connection = await amqp.connect(RABBIT_URL);
   const channel = await connection.createChannel();
   await channel.assertQueue(QUEUE_NAMES.MARKET_REQUESTS);
@@ -20,7 +34,7 @@ async function start() {
     
     try {
       let totalQuantityReceived = 0;
-      console.log(`🔍 Mercado: Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}.`);
+      await logger.info(`Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}`);
       
       // Intentar comprar hasta conseguir la cantidad necesaria
       while (totalQuantityReceived < quantity) {
@@ -30,20 +44,24 @@ async function start() {
           
           if (quantitySold > 0) {
             totalQuantityReceived += quantitySold;
-            console.log(`🟢 Mercado: Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}.`);
+            await logger.info(`Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}`);
           } else {
-            console.log(`🟡 Mercado: "${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
+            await logger.warning(`"${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
             // Esperar antes de intentar de nuevo
             await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
           }
         } catch (error) {
-          console.error(`🔴 Error en API del Mercado:`, error.message);
+          await logger.error(`Error en API del Mercado: ${error.message}`, { 
+            ingredient, 
+            orderId,
+            stack: error.stack 
+          });
           // Esperar antes de intentar de nuevo
           await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
         }
       }
       
-      console.log(`✅ Mercado: Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}.`);
+      await logger.info(`Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}`);
       
       // Enviar respuesta a quien solicitó
       const response = { ingredient: ingredient, quantity: totalQuantityReceived };
@@ -52,21 +70,31 @@ async function start() {
       });
       channel.ack(msg);
     } catch (err) {
-      console.error('✘ Error general procesando solicitud en Mercado:', err);
+      await logger.error(`Error general procesando solicitud en Mercado: ${err.message}`, { 
+        ingredient, 
+        orderId,
+        stack: err.stack 
+      });
       channel.nack(msg, false, true); // Reencolar mensaje para reintento
     }
   }, { noAck: false });
 
-  app.get('/', (_req, res) => {
+  app.get('/', async (_req, res) => {
+    await logger.info('Endpoint raíz del servicio de mercado accedido');
     res.send('Servicio de Mercado operativo');
   });
 
   app.listen(PORT, () => {
-    console.log(`🚀 Servicio de Mercado escuchando en puerto ${PORT}`);
+    logger.info(`Servicio de Mercado escuchando en puerto ${PORT}`);
   });
 }
 
-start().catch(err => {
-  console.error('✘ Error iniciando el Servicio de Mercado:', err);
+start().catch(async err => {
+  try {
+    await logger.error(`Error iniciando el Servicio de Mercado: ${err.message}`, { stack: err.stack });
+  } catch (logError) {
+    console.error('✘ Error iniciando el Servicio de Mercado:', err);
+    console.error('Error adicional al intentar registrar el error:', logError);
+  }
   process.exit(1);
 });
