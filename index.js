@@ -31,7 +31,7 @@ async function start() {
     
     try {
       let totalQuantityReceived = 0;
-      await logger.info(`Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}`);
+      await logger.info(`🔍 Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}`);
       
       while (totalQuantityReceived < quantity) {
         try {
@@ -40,7 +40,7 @@ async function start() {
           
           if (quantitySold > 0) {
             totalQuantityReceived += quantitySold;
-            await logger.info(`Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}`);
+            await logger.info(`🛒 Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}`);
           } else {
             await logger.warning(`"${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
             await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
@@ -55,7 +55,7 @@ async function start() {
         }
       }
       
-      await logger.info(`Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}`);
+      await logger.info(`🔍 Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}`);
       
       const response = { ingredient: ingredient, quantity: totalQuantityReceived };
       channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response)), {
