@@ -1,8 +1,10 @@
 const express = require('express');
 const amqp = require('amqplib');
+const axios = require('axios');
 
 const PORT = process.env.PORT || 3004;
 const RABBIT_URL = process.env.RABBITMQ_URL || 'amqp://localhost';
+const MARKET_API_URL = 'https://recruitment.alegra.com/api/farmers-market/buy';
 
 const app = express();
 app.use(express.json());
@@ -12,32 +14,47 @@ async function start() {
   const channel = await connection.createChannel();
   await channel.assertQueue('market_requests');
 
-  channel.consume('market_requests', (msg) => {
+  channel.consume('market_requests', async (msg) => {
     if (!msg) return;
     const request = JSON.parse(msg.content.toString());
     const { orderId, ingredient, quantity } = request;
-    const availableNow = Math.random() < 0.7;
-    if (availableNow) {
-      console.log(`🟢 Mercado: Ingrediente "${ingredient}" (cant. ${quantity}) disponible para Pedido ${orderId}. Enviando confirmación...`);
-      const response = { ingredient: ingredient, quantity: quantity };
+    
+    try {
+      let totalQuantityReceived = 0;
+      console.log(`🔍 Mercado: Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}.`);
+      
+      // Intentar comprar hasta conseguir la cantidad necesaria
+      while (totalQuantityReceived < quantity) {
+        try {
+          const response = await axios.get(`${MARKET_API_URL}?ingredient=${ingredient}`);
+          const quantitySold = response.data?.quantitySold || 0;
+          
+          if (quantitySold > 0) {
+            totalQuantityReceived += quantitySold;
+            console.log(`🟢 Mercado: Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}.`);
+          } else {
+            console.log(`🟡 Mercado: "${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
+            // Esperar antes de intentar de nuevo
+            await new Promise(resolve => setTimeout(resolve, 5000));
+          }
+        } catch (error) {
+          console.error(`🔴 Error en API del Mercado:`, error.message);
+          // Esperar antes de intentar de nuevo
+          await new Promise(resolve => setTimeout(resolve, 5000));
+        }
+      }
+      
+      console.log(`✅ Mercado: Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}.`);
+      
+      // Enviar respuesta a quien solicitó
+      const response = { ingredient: ingredient, quantity: totalQuantityReceived };
       channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response)), {
         correlationId: msg.properties.correlationId
       });
       channel.ack(msg);
-    } else {
-      console.log(`🟡 Mercado: "${ingredient}" no disponible actualmente para Pedido ${orderId}. Esperando reabastecimiento...`);
-      setTimeout(() => {
-        console.log(`🟢 Mercado: Ingrediente "${ingredient}" reabastecido. Enviando ${quantity} unidad(es) para Pedido ${orderId}.`);
-        const response = { ingredient: ingredient, quantity: quantity };
-        try {
-          channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response)), {
-            correlationId: msg.properties.correlationId
-          });
-          channel.ack(msg);
-        } catch (err) {
-          console.error('✘ Error enviando respuesta desde Mercado:', err);
-        }
-      }, 5000);
+    } catch (err) {
+      console.error('✘ Error general procesando solicitud en Mercado:', err);
+      channel.nack(msg, false, true); // Reencolar mensaje para reintento
     }
   }, { noAck: false });
 
