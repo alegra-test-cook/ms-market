@@ -18,7 +18,7 @@ app.use(express.json());
 
 async function start() {
   await logger.initLogger();
-  await logger.info('Servicio de Mercado iniciado');
+  await logger.info('🛍️ Servicio de Mercado iniciado');
   
   const connection = await amqp.connect(RABBIT_URL);
   const channel = await connection.createChannel();
@@ -78,7 +78,7 @@ async function start() {
   });
 
   app.listen(PORT, () => {
-    logger.info(`Servicio de Mercado escuchando en puerto ${PORT}`);
+    console.log(`Servicio de Mercado escuchando en puerto ${PORT}`);
   });
 }
 
