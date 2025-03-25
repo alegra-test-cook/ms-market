@@ -3,15 +3,13 @@ const amqp = require('amqplib');
 const axios = require('axios');
 const cors = require('cors');
 
-// Importar configuraciones
 const { PORT, RABBIT_URL, MARKET_API_URL, QUEUE_NAMES, RETRY_TIMEOUT } = require('./config');
 const logger = require('./logger');
 
 const app = express();
 
-// Configurar CORS
 app.use(cors({
-  origin: '*',  // Permite todos los orígenes - ajustar en producción
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -19,7 +17,6 @@ app.use(cors({
 app.use(express.json());
 
 async function start() {
-  // Inicializar logger
   await logger.initLogger();
   await logger.info('Servicio de Mercado iniciado');
   
@@ -36,7 +33,6 @@ async function start() {
       let totalQuantityReceived = 0;
       await logger.info(`Buscando "${ingredient}" (cant. necesaria: ${quantity}) para Pedido ${orderId}`);
       
-      // Intentar comprar hasta conseguir la cantidad necesaria
       while (totalQuantityReceived < quantity) {
         try {
           const response = await axios.get(`${MARKET_API_URL}?ingredient=${ingredient}`);
@@ -47,7 +43,6 @@ async function start() {
             await logger.info(`Compra exitosa de ${quantitySold} unidad(es) de "${ingredient}" para Pedido ${orderId}`);
           } else {
             await logger.warning(`"${ingredient}" no disponible actualmente. Esperando reabastecimiento...`);
-            // Esperar antes de intentar de nuevo
             await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
           }
         } catch (error) {
@@ -56,14 +51,12 @@ async function start() {
             orderId,
             stack: error.stack 
           });
-          // Esperar antes de intentar de nuevo
           await new Promise(resolve => setTimeout(resolve, RETRY_TIMEOUT));
         }
       }
       
       await logger.info(`Cantidad total conseguida de "${ingredient}": ${totalQuantityReceived} para Pedido ${orderId}`);
       
-      // Enviar respuesta a quien solicitó
       const response = { ingredient: ingredient, quantity: totalQuantityReceived };
       channel.sendToQueue(msg.properties.replyTo, Buffer.from(JSON.stringify(response)), {
         correlationId: msg.properties.correlationId
@@ -75,7 +68,7 @@ async function start() {
         orderId,
         stack: err.stack 
       });
-      channel.nack(msg, false, true); // Reencolar mensaje para reintento
+      channel.nack(msg, false, true);
     }
   }, { noAck: false });
 
